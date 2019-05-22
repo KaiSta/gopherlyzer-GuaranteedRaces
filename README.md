@@ -35,7 +35,7 @@ We use a small example program to show the process and the results of our protot
 go run main.go -mode sshb -parser java -trace tests/simple.log
  ```
 
-The result contains shows the guaranteed races as pairs of code locations.
+The result shows the guaranteed races as pairs of code locations.
 
  ```
 ...
