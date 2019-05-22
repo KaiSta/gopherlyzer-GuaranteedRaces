@@ -289,120 +289,120 @@ var countPhase1Unique uint64
 var countPhase2Unique uint64
 
 // loc1 = prev access, loc2 = current access
-func RaceStatistics2(loc1, loc2 Location, isWrRdDep bool, level int) {
-	show := false
+// func RaceStatistics2(loc1, loc2 Location, isWrRdDep bool, level int) {
+// 	show := false
 
-	if level == 0 {
-		countPhase1++
-	} else {
-		countPhase2++
-	}
+// 	if level == 0 {
+// 		countPhase1++
+// 	} else {
+// 		countPhase2++
+// 	}
 
-	if isWrRdDep {
-		writeReadDepRace++
-		xx, ok := wrdFilter[loc1]
-		isNew := true
-		if ok {
-			if _, ok2 := xx[loc2]; ok2 {
-				isNew = false
-			}
-		} else {
-			xx = make(map[Location]struct{})
-		}
-		xx[loc2] = struct{}{}
-		wrdFilter[loc1] = xx
+// 	if isWrRdDep {
+// 		writeReadDepRace++
+// 		xx, ok := wrdFilter[loc1]
+// 		isNew := true
+// 		if ok {
+// 			if _, ok2 := xx[loc2]; ok2 {
+// 				isNew = false
+// 			}
+// 		} else {
+// 			xx = make(map[Location]struct{})
+// 		}
+// 		xx[loc2] = struct{}{}
+// 		wrdFilter[loc1] = xx
 
-		if isNew {
-			writeReadDepRaceUnique++
-			color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
-			show = true
-		}
-	}
+// 		if isNew {
+// 			writeReadDepRaceUnique++
+// 			color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
+// 			show = true
+// 		}
+// 	}
 
-	if loc1.W && loc2.W {
-		writeWriteRace++
-		xx, ok := wwFilter[loc1]
-		if ok {
-			if _, ok2 := xx[loc2]; ok2 {
-				return
-			}
-		} else {
-			xx = make(map[Location]struct{})
-		}
-		xx[loc2] = struct{}{}
-		wwFilter[loc1] = xx
-		writeWriteRaceUnique++
-		color.HiRed("WWRACE:%v,%v\n", loc1, loc2)
-		show = true
-	} else if loc1.W && !loc2.W {
-		writeReadRace++
-		// if isWrRdDep {
-		// 	writeReadDepRace++
-		// }
-		xx, ok := wrFilter[loc1]
-		if ok {
-			if _, ok2 := xx[loc2]; ok2 {
-				return
-			}
-		} else {
-			xx = make(map[Location]struct{})
-		}
-		xx[loc2] = struct{}{}
-		wrFilter[loc1] = xx
-		writeReadRaceUnique++
-		// if isWrRdDep {
-		// 	writeReadDepRaceUnique++
-		// 	color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
-		// }
-		color.HiRed("WRRACE:%v,%v\n", loc1, loc2)
-		show = true
-	} else if !loc1.W && loc2.W {
-		readWriteRace++
-		xx, ok := rwFilter[loc1]
-		if ok {
-			if _, ok2 := xx[loc2]; ok2 {
-				return
-			}
-		} else {
-			xx = make(map[Location]struct{})
-		}
-		xx[loc2] = struct{}{}
-		rwFilter[loc1] = xx
-		readWriteRaceUnique++
-		color.HiRed("RWRACE:%v,%v\n", loc1, loc2)
-		show = true
-	} else if !loc1.W && !loc2.W {
-		readReadRace++
-		xx, ok := rrFilter[loc1]
-		if ok {
-			if _, ok2 := xx[loc2]; ok2 {
-				return
-			}
-		} else {
-			xx = make(map[Location]struct{})
-		}
-		xx[loc2] = struct{}{}
-		rrFilter[loc1] = xx
-		readReadRaceUnique++
-	}
+// 	if loc1.W && loc2.W {
+// 		writeWriteRace++
+// 		xx, ok := wwFilter[loc1]
+// 		if ok {
+// 			if _, ok2 := xx[loc2]; ok2 {
+// 				return
+// 			}
+// 		} else {
+// 			xx = make(map[Location]struct{})
+// 		}
+// 		xx[loc2] = struct{}{}
+// 		wwFilter[loc1] = xx
+// 		writeWriteRaceUnique++
+// 		color.HiRed("WWRACE:%v,%v\n", loc1, loc2)
+// 		show = true
+// 	} else if loc1.W && !loc2.W {
+// 		writeReadRace++
+// 		// if isWrRdDep {
+// 		// 	writeReadDepRace++
+// 		// }
+// 		xx, ok := wrFilter[loc1]
+// 		if ok {
+// 			if _, ok2 := xx[loc2]; ok2 {
+// 				return
+// 			}
+// 		} else {
+// 			xx = make(map[Location]struct{})
+// 		}
+// 		xx[loc2] = struct{}{}
+// 		wrFilter[loc1] = xx
+// 		writeReadRaceUnique++
+// 		// if isWrRdDep {
+// 		// 	writeReadDepRaceUnique++
+// 		// 	color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
+// 		// }
+// 		color.HiRed("WRRACE:%v,%v\n", loc1, loc2)
+// 		show = true
+// 	} else if !loc1.W && loc2.W {
+// 		readWriteRace++
+// 		xx, ok := rwFilter[loc1]
+// 		if ok {
+// 			if _, ok2 := xx[loc2]; ok2 {
+// 				return
+// 			}
+// 		} else {
+// 			xx = make(map[Location]struct{})
+// 		}
+// 		xx[loc2] = struct{}{}
+// 		rwFilter[loc1] = xx
+// 		readWriteRaceUnique++
+// 		color.HiRed("RWRACE:%v,%v\n", loc1, loc2)
+// 		show = true
+// 	} else if !loc1.W && !loc2.W {
+// 		readReadRace++
+// 		xx, ok := rrFilter[loc1]
+// 		if ok {
+// 			if _, ok2 := xx[loc2]; ok2 {
+// 				return
+// 			}
+// 		} else {
+// 			xx = make(map[Location]struct{})
+// 		}
+// 		xx[loc2] = struct{}{}
+// 		rrFilter[loc1] = xx
+// 		readReadRaceUnique++
+// 	}
 
-	if show {
-		//fmt.Printf("Reads:%v\nWrites:%v\nRead-Read-Races:%v/%v\nRead-Write-Races:%v/%v\nWrite-Read-Races:%v/%v\nWrite-Write-Race:%v/%v\nWrite-Read-Deps:%v\nWrite-Read-Dep-Races:%v/%v\n",
-		//	reads, writes, readReadRaceUnique, readReadRace, readWriteRaceUnique, readWriteRace, writeReadRaceUnique, writeReadRace, writeWriteRaceUnique, writeWriteRace, writeReadDep, writeReadDepRace, writeReadDepRace)
-		if level == 0 {
-			countPhase1Unique++
-		} else {
-			countPhase2Unique++
-		}
+// 	if show {
+// 		//fmt.Printf("Reads:%v\nWrites:%v\nRead-Read-Races:%v/%v\nRead-Write-Races:%v/%v\nWrite-Read-Races:%v/%v\nWrite-Write-Race:%v/%v\nWrite-Read-Deps:%v\nWrite-Read-Dep-Races:%v/%v\n",
+// 		//	reads, writes, readReadRaceUnique, readReadRace, readWriteRaceUnique, readWriteRace, writeReadRaceUnique, writeReadRace, writeWriteRaceUnique, writeWriteRace, writeReadDep, writeReadDepRace, writeReadDepRace)
+// 		if level == 0 {
+// 			countPhase1Unique++
+// 		} else {
+// 			countPhase2Unique++
+// 		}
 
-		fmt.Printf("ALL:%v/%v\n", writeWriteRaceUnique+writeReadRaceUnique+readWriteRaceUnique, writeWriteRace+writeReadRace+readWriteRace)
-		//ReportNumbers()
-		if TestFlag {
-			TestFunc(loc1, loc2, 0)
-		}
-	}
+// 		fmt.Printf("ALL:%v/%v\n", writeWriteRaceUnique+writeReadRaceUnique+readWriteRaceUnique, writeWriteRace+writeReadRace+readWriteRace)
+// 		//ReportNumbers()
+// 		if TestFlag {
+// 			TestFunc(loc1, loc2, 0)
+// 		}
+// 	}
 
-}
+// }
 
 var freecounter uint64
 
@@ -653,4 +653,147 @@ func singleMatch(op1, op2 util.Operation) bool {
 		return false
 	}
 	return true
+}
+
+var details = true
+
+// loc1 = prev access, loc2 = current access
+func RaceStatistics2(loc1, loc2 Location, isWrRdDep bool, level int) {
+	show := false
+
+	if level == 0 {
+		countPhase1++
+	} else {
+		countPhase2++
+	}
+
+	if isWrRdDep {
+		writeReadDepRace++
+		xx, ok := wrdFilter[loc1]
+		isNew := true
+		if ok {
+			if _, ok2 := xx[loc2]; ok2 {
+				isNew = false
+			}
+		} else {
+			xx = make(map[Location]struct{})
+		}
+		xx[loc2] = struct{}{}
+		wrdFilter[loc1] = xx
+
+		if isNew {
+			writeReadDepRaceUnique++
+			if !details {
+				color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
+			} else {
+				f1 := parser.FileNumToString[loc1.File]
+				f2 := parser.FileNumToString[loc2.File]
+				color.HiBlue("WRD_RACE:%v:%v, %v:%v\n", f1, loc1.Line, f2, loc2.Line)
+			}
+			show = true
+		}
+	}
+
+	if loc1.W && loc2.W {
+		writeWriteRace++
+		xx, ok := wwFilter[loc1]
+		if ok {
+			if _, ok2 := xx[loc2]; ok2 {
+				return
+			}
+		} else {
+			xx = make(map[Location]struct{})
+		}
+		xx[loc2] = struct{}{}
+		wwFilter[loc1] = xx
+		writeWriteRaceUnique++
+		if !details {
+			color.HiRed("WWRACE:%v,%v\n", loc1, loc2)
+		} else {
+			f1 := parser.FileNumToString[loc1.File]
+			f2 := parser.FileNumToString[loc2.File]
+			color.HiRed("WWRACE:%v:%v, %v:%v\n", f1, loc1.Line, f2, loc2.Line)
+		}
+		show = true
+	} else if loc1.W && !loc2.W {
+		writeReadRace++
+		// if isWrRdDep {
+		// 	writeReadDepRace++
+		// }
+		xx, ok := wrFilter[loc1]
+		if ok {
+			if _, ok2 := xx[loc2]; ok2 {
+				return
+			}
+		} else {
+			xx = make(map[Location]struct{})
+		}
+		xx[loc2] = struct{}{}
+		wrFilter[loc1] = xx
+		writeReadRaceUnique++
+		// if isWrRdDep {
+		// 	writeReadDepRaceUnique++
+		// 	color.HiBlue("WRD_RACE:%v, %v\n", loc1, loc2)
+		// }
+		if !details {
+			color.HiRed("WRRACE:%v,%v\n", loc1, loc2)
+		} else {
+			f1 := parser.FileNumToString[loc1.File]
+			f2 := parser.FileNumToString[loc2.File]
+			color.HiRed("WRRACE:%v:%v, %v:%v\n", f1, loc1.Line, f2, loc2.Line)
+		}
+
+		show = true
+	} else if !loc1.W && loc2.W {
+		readWriteRace++
+		xx, ok := rwFilter[loc1]
+		if ok {
+			if _, ok2 := xx[loc2]; ok2 {
+				return
+			}
+		} else {
+			xx = make(map[Location]struct{})
+		}
+		xx[loc2] = struct{}{}
+		rwFilter[loc1] = xx
+		readWriteRaceUnique++
+		if !details {
+			color.HiRed("RWRACE:%v,%v\n", loc1, loc2)
+		} else {
+			f1 := parser.FileNumToString[loc1.File]
+			f2 := parser.FileNumToString[loc2.File]
+			color.HiRed("RWRACE:%v:%v, %v:%v\n", f1, loc1.Line, f2, loc2.Line)
+		}
+		show = true
+	} else if !loc1.W && !loc2.W {
+		readReadRace++
+		xx, ok := rrFilter[loc1]
+		if ok {
+			if _, ok2 := xx[loc2]; ok2 {
+				return
+			}
+		} else {
+			xx = make(map[Location]struct{})
+		}
+		xx[loc2] = struct{}{}
+		rrFilter[loc1] = xx
+		readReadRaceUnique++
+	}
+
+	if show {
+		//fmt.Printf("Reads:%v\nWrites:%v\nRead-Read-Races:%v/%v\nRead-Write-Races:%v/%v\nWrite-Read-Races:%v/%v\nWrite-Write-Race:%v/%v\nWrite-Read-Deps:%v\nWrite-Read-Dep-Races:%v/%v\n",
+		//	reads, writes, readReadRaceUnique, readReadRace, readWriteRaceUnique, readWriteRace, writeReadRaceUnique, writeReadRace, writeWriteRaceUnique, writeWriteRace, writeReadDep, writeReadDepRace, writeReadDepRace)
+		if level == 0 {
+			countPhase1Unique++
+		} else {
+			countPhase2Unique++
+		}
+
+		fmt.Printf("ALL:%v/%v\n", writeWriteRaceUnique+writeReadRaceUnique+readWriteRaceUnique, writeWriteRace+writeReadRace+readWriteRace)
+		//ReportNumbers()
+		if TestFlag {
+			TestFunc(loc1, loc2, 0)
+		}
+	}
+
 }
