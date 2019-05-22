@@ -18,10 +18,10 @@ Prototype implementation of our analysis described in *Data Race Prediction for 
 
   ## How to use
 
- 1#    | 2#    | 3#
+ 1# |2# | 3#
  ------|-------|------
- wr(x) |   -   |  -
- wr(y) |   -   |  -
-    -  |   -   | wr(y)
-    -  | rd(y) |  -
-    -  | wr(x) |  -
+ wr(x) | ... | ...
+ wr(y) | ... | ...
+ ... | ... | wr(y)
+ ... | rd(y) | ...
+ ... | wr(x) | ...
