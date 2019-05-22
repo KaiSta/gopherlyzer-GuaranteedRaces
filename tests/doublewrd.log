@@ -1,0 +1,6 @@
+1,SIG,1111,nil,1111
+2,WT,1111,nil,1111
+1,WR,1,Test.java:1:1,1
+1,WR,2,Test.java:2:2,2
+2,RD,2,Test.java:3:3,3
+2,RD,1,Test.java:4:4,4

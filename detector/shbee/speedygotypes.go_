@@ -1,0 +1,232 @@
+package shbee
+
+import "fmt"
+
+type vc map[uint64]uint64
+
+type epoch struct {
+	t uint64
+	v uint64
+}
+
+type vcepoch interface {
+	less(vcepoch) bool
+	sync(vcepoch) vcepoch
+	add(uint64, uint64)
+	expand(uint64, uint64) vcepoch
+	clone() vcepoch
+	set(uint64, uint64) vcepoch
+	get(uint64) uint64
+	len() int
+	String() string
+}
+
+func (vc vc) String() string {
+	s := "["
+	for k, v := range vc {
+		s += fmt.Sprintf("(T%v@%v)", k, v)
+	}
+	s += "]"
+	return s
+}
+
+func newvc() vc {
+	return make(map[uint64]uint64)
+}
+
+func (v vc) len() int {
+	return len(v)
+}
+
+func (v vc) set(t uint64, val uint64) vcepoch {
+	v[t] = val
+	return v
+}
+func (v vc) get(t uint64) uint64 {
+	return v[t]
+}
+
+func (v vc) less(v2 vcepoch) bool {
+	switch x := v2.(type) {
+	case vc:
+		if len(v) == 0 {
+			return true
+		}
+		oneRealSmaller := false
+		for k := range v {
+			if v[k] > x[k] {
+				return false
+			}
+			if v[k] < x[k] {
+				oneRealSmaller = true
+			}
+		}
+		for k := range x {
+			if v[k] > x[k] {
+				return false
+			}
+			if v[k] < x[k] {
+				oneRealSmaller = true
+			}
+		}
+		return oneRealSmaller
+	case epoch:
+		return false //vc can never be smaller then a epoch
+	}
+
+	return false
+}
+
+func (v vc) sync(v2 vcepoch) (ret vcepoch) {
+	switch x := v2.(type) {
+	case vc:
+		for k, vv := range v {
+			pv := x[k]
+			tmp := max(vv, pv)
+			v[k] = tmp
+			x[k] = tmp
+		}
+		for k, pv := range x {
+			vv := v[k]
+			tmp := max(vv, pv)
+			v[k] = tmp
+			x[k] = tmp
+		}
+		ret = v
+	case epoch:
+		panic("sync with epoch not possible!")
+	}
+	return
+}
+
+func (v vc) sync2(v2 vc) {
+	for k, vv := range v {
+		pv := v2[k]
+		tmp := max(vv, pv)
+		v[k] = tmp
+		v2[k] = tmp
+	}
+	for k, pv := range v2 {
+		vv := v[k]
+		tmp := max(vv, pv)
+		v[k] = tmp
+		v2[k] = tmp
+	}
+}
+
+func (v vc) add(t uint64, val uint64) {
+	v[t] = v[t] + val
+}
+
+func (v vc) expand(t uint64, val uint64) vcepoch {
+	v2 := v.clone().(vc)
+	v2[t] = val
+	return v2
+}
+
+func (v vc) clone() vcepoch {
+	v2 := newvc()
+	for k, v := range v {
+		v2[k] = v
+	}
+	return v2
+}
+
+func (v vc) clone2() vc {
+	v2 := newvc()
+	for k, v := range v {
+		v2[k] = v
+	}
+	return v2
+}
+
+func newEpoch(t uint64, val uint64) epoch {
+	return epoch{t, val}
+}
+
+func (v epoch) less(v2 vcepoch) bool {
+	if v.t == 0 {
+		return true
+	}
+	switch x := v2.(type) {
+	case vc:
+		return v.v <= x[v.t]
+	case epoch:
+		return v.t == x.t && v.v <= x.v
+	}
+
+	return false
+}
+
+func (v epoch) sync(v2 vcepoch) vcepoch {
+	switch x := v2.(type) {
+	case vc:
+		vc := newvc()
+		for k, v := range x {
+			vc[k] = v
+		}
+		if v.t != 0 {
+			tmp := max(vc[v.t], v.v)
+			vc[v.t] = tmp
+		}
+		return vc
+	case epoch:
+		if v.t == x.t {
+			v.v = max(v.v, x.v)
+			return v
+		}
+	}
+	panic("unknown type!")
+	return newvc()
+}
+
+func (v epoch) add(t uint64, val uint64) {
+	panic("add on epoch")
+}
+
+func (v epoch) expand(t uint64, val uint64) vcepoch {
+	v2 := newvc()
+	if v.t != 0 {
+		v2[v.t] = v.v
+	}
+	v2[t] = val
+	return v2
+}
+
+func (v epoch) clone() vcepoch {
+	return newEpoch(v.t, v.v)
+}
+
+func (v epoch) set(t uint64, val uint64) vcepoch {
+	if v.t == t {
+		return newEpoch(t, val)
+	}
+	v2 := newvc()
+	v2[t] = val
+	if v.t != 0 {
+		v2[v.t] = v.v
+	}
+	return v2
+}
+
+func (v epoch) get(t uint64) uint64 {
+	if v.t == t {
+		return v.v
+	}
+	return 0
+}
+
+func (v epoch) String() string {
+	return fmt.Sprintf("(T%v@%v)", v.t, v.v)
+}
+
+func (v epoch) len() int {
+	return 1
+}
+
+func max(a, b uint64) uint64 {
+	if a < b {
+		return b
+	}
+	return a
+}
