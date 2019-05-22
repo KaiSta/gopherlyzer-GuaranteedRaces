@@ -17,4 +17,11 @@ Prototype implementation of our analysis described in *Data Race Prediction for 
   with state of the art happens-before based race predictors such as FastTrack and SHB.
 
   ## How to use
-  
+
+ 1#    | 2#    | 3#
+ ------|-------|------
+ wr(x) |       |
+ wr(y) |       |
+       |       | wr(y)
+       | rd(y) |
+       | wr(x) |
