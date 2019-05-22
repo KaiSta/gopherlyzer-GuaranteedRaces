@@ -22,6 +22,6 @@ Prototype implementation of our analysis described in *Data Race Prediction for 
  ------|-------|------
  wr(x) |   -   |  -
  wr(y) |   -   |  -
-    -  |       | wr(y)
-    -  | rd(y) |
-    -  | wr(x) |
+    -  |   -   | wr(y)
+    -  | rd(y) |  -
+    -  | wr(x) |  -
