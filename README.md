@@ -1,6 +1,6 @@
 # gopherlyzer-GuaranteedRaces
 
-Prototype implementation of our analysis described in *Data Race Prediction for Inaccurate Traces*.
+Prototype implementation of our analysis described in [Data Race Prediction for Inaccurate Traces](https://arxiv.org/abs/1905.10855).
 
 ## Description
 
