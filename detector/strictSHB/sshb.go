@@ -63,10 +63,11 @@ type thread struct {
 	vc    vcepoch
 	curr  *node
 	first *node
+	ls    map[uint32]struct{}
 }
 
 func newThread(tid uint32) thread {
-	return thread{newvc2().set(tid, 1), nil, nil}
+	return thread{newvc2().set(tid, 1), nil, nil, make(map[uint32]struct{})}
 }
 
 var threads2 = make(map[uint32][]*node)
@@ -97,8 +98,9 @@ type variable struct {
 var nodes []*node
 
 type race struct {
-	acc1 *node
-	acc2 *node
+	acc1    *node
+	acc2    *node
+	lsEmpty bool
 }
 
 type variableHistory struct {
@@ -111,6 +113,7 @@ type node struct {
 	next    []*node
 	clock   vcepoch
 	visited bool
+	ls      map[uint32]struct{}
 }
 
 func newVar() variable {
@@ -150,6 +153,15 @@ func isUnique(r race) bool {
 	return false
 }
 
+func intersect(a, b map[uint32]struct{}) bool {
+	for k := range a {
+		if _, ok := b[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 	if !p.DataAccess {
 		return
@@ -165,8 +177,11 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 		varstate = newVar()
 	}
 
+	newNode := &node{ev: p.Ev, clock: t1.vc.clone(), next: make([]*node, 0), ls: make(map[uint32]struct{})}
+	for k := range t1.ls {
+		newNode.ls[k] = struct{}{}
+	}
 	//Program order
-	newNode := &node{ev: p.Ev, clock: t1.vc.clone(), next: make([]*node, 0)}
 	if t1.curr != nil {
 		t1.curr.next = append(t1.curr.next, newNode)
 	}
@@ -185,7 +200,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 				curr := t1.vc.get(w.ev.Thread)
 				if k > curr {
 					newWrites = append(newWrites, varstate.writes[i])
-					r := race{varstate.writes[i], newNode}
+					r := race{varstate.writes[i], newNode, intersect(t1.ls, w.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}
@@ -204,7 +219,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 					//update wrd graph
 					newNode.next = append(newNode.next, varstate.reads[i])
 					//store race
-					r := race{varstate.reads[i], newNode}
+					r := race{varstate.reads[i], newNode, intersect(t1.ls, r.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}
@@ -222,7 +237,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 				curr := t1.vc.get(w.ev.Thread)
 				if k > curr {
 					varstate.writes[i].next = append(varstate.writes[i].next, newNode)
-					r := race{varstate.writes[i], newNode}
+					r := race{varstate.writes[i], newNode, intersect(t1.ls, w.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}
@@ -289,6 +304,8 @@ func (l *ListenerAsyncSnd) Put(p *util.SyncPair) {
 		lock.curr.next = append(lock.curr.next, newNode)
 	}
 
+	t1.ls[p.T2] = struct{}{}
+
 	threads[p.T1] = t1
 }
 
@@ -327,6 +344,8 @@ func (l *ListenerAsyncRcv) Put(p *util.SyncPair) {
 
 	lock.vc = t1.vc.clone()
 	t1.vc = t1.vc.add(p.T1, 1)
+
+	delete(t1.ls, p.T2)
 
 	threads[p.T1] = t1
 	locks[p.T2] = lock
@@ -427,6 +446,8 @@ func (l *ListenerPostProcess) Put(p *util.SyncPair) {
 	}
 	fmt.Printf("Variables:%v\nDynamicRaces:%v\nUniqueRaces:%v\n", len(variables), sumRaces, sumRaces)
 
+	falsePositives := 0
+
 	steps := 0
 	complete := sumRaces
 	stepBarrier := (complete / 20) + 1
@@ -439,6 +460,9 @@ func (l *ListenerPostProcess) Put(p *util.SyncPair) {
 					report.Location{File: r.acc1.ev.Ops[0].SourceRef, Line: r.acc1.ev.Ops[0].Line, W: r.acc1.ev.Ops[0].Kind&util.WRITE > 0},
 					report.Location{File: r.acc2.ev.Ops[0].SourceRef, Line: r.acc2.ev.Ops[0].Line, W: r.acc2.ev.Ops[0].Kind&util.WRITE > 0},
 					false, 0)
+				if r.lsEmpty {
+					falsePositives++
+				}
 			}
 			steps++
 			if steps%stepBarrier == 0 {
@@ -446,6 +470,7 @@ func (l *ListenerPostProcess) Put(p *util.SyncPair) {
 			}
 		}
 	}
+	fmt.Println("FALSE POSITIVES:", falsePositives)
 
 	countAlternativeWrites()
 }
