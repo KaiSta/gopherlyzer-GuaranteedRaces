@@ -21,7 +21,7 @@ func main() {
 	plain := flag.Bool("plain", true, "output as plain text")
 	bench := flag.Bool("bench", false, "used for benchmarks only")
 	analysis := flag.String("mode", "fasttrack", "select between eraser,racetrack,fasttrack,tsan")
-	parser := flag.String("parser", "go", "go or java")
+	parser := flag.String("parser", "go", "go,java,javainc")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to file")
 	validateTrace := flag.Bool("validate", false, "set if the trace should be validated for correctness")
 	n := flag.Uint64("n", ^uint64(0), "number of events to verify")
@@ -54,12 +54,26 @@ func main() {
 	a, b := filepath.Abs(*trace)
 	fmt.Println("Trace path:", a, b)
 	var items []util.Item
+	//var itemChan chan *util.Item
 	if *parser == "go" {
 		items = traceParser.ParseTracev2(*trace)
-	} else {
+	} else if *parser == "java" || *parser == "java2" {
 		items = traceParser.ParseJTracev2(*trace, *n)
+	} else {
+		//	itemChan = make(chan *util.Item, 100000)
+		//	go traceParser.ParseJTracevInc(*trace, *n, itemChan)
 	}
 	fmt.Println("Parsing trace complete!")
+
+	// for k, v := range traceParser.FileNumToString {
+	// 	if v == "NodeSequence.java" {
+	// 		fmt.Println(k, "\t", v)
+	// 	} else if v == "Lexer.java" {
+	// 		fmt.Println(k, "\t", v)
+	// 	}
+	// }
+	// return
+	//parser.FileNumToString[loc1.File]
 
 	if *validateTrace {
 		fmt.Println("Validating trace...")
@@ -74,8 +88,16 @@ func main() {
 	}
 
 	//debug.SetGCPercent(-1)
+	if *parser == "javainc2" {
+		race.RunAPISingleIncDouble(*analysis, *postProcess, *trace, *n)
+	} else if *parser == "java2" {
+		race.RunAPISingleDouble(items, *analysis, *filter, *postProcess)
+	} else if *parser != "javainc" {
+		race.RunAPISingle(items, *analysis, *filter, *postProcess)
+	} else {
+		race.RunAPISingleInc(*analysis, *postProcess, *trace, *n)
+	}
 
-	race.RunAPISingle(items, *analysis, *filter, *postProcess)
 	if *cpuprofile != "" {
 		pprof.StopCPUProfile()
 	}

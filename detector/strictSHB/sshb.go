@@ -200,7 +200,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 				curr := t1.vc.get(w.ev.Thread)
 				if k > curr {
 					newWrites = append(newWrites, varstate.writes[i])
-					r := race{varstate.writes[i], newNode, intersect(t1.ls, w.ls)}
+					r := race{varstate.writes[i], newNode, !intersect(t1.ls, w.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}
@@ -219,7 +219,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 					//update wrd graph
 					newNode.next = append(newNode.next, varstate.reads[i])
 					//store race
-					r := race{varstate.reads[i], newNode, intersect(t1.ls, r.ls)}
+					r := race{varstate.reads[i], newNode, !intersect(t1.ls, r.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}
@@ -237,7 +237,7 @@ func (l *ListenerDataAccess) Put(p *util.SyncPair) {
 				curr := t1.vc.get(w.ev.Thread)
 				if k > curr {
 					varstate.writes[i].next = append(varstate.writes[i].next, newNode)
-					r := race{varstate.writes[i], newNode, intersect(t1.ls, w.ls)}
+					r := race{varstate.writes[i], newNode, !intersect(t1.ls, w.ls)}
 					if isUnique(r) {
 						varstate.races = append(varstate.races, r)
 					}

@@ -4,18 +4,19 @@ import (
 	"fmt"
 	"time"
 
+	traceParser "../parser"
 	"../util"
-	"./analysis"
+	algos "./analysis"
 	"./empty"
 	"./eraser"
-	"./fasttrack"
+	fastTrack "./fasttrack"
 	"./report"
-	"./sharedVars"
+	svars "./sharedVars"
 	"./shb"
 	"./shbee"
 	"./shbp"
-	"./speedyGo/v2"
-	"./strictSHB"
+	speedygov2 "./speedyGo/v2"
+	sshb "./strictSHB"
 	"./threadSanitizer"
 	"./traceReplay"
 )
@@ -34,6 +35,14 @@ func init() {
 	sshb.Init()
 	shbee.Init()
 	shbp.Init()
+	// ucp.Init()
+	// racequal.Init()
+	// wcp.Init()
+	// fsshbee.Init()
+	// tsanee.Init()
+	// wcpp.Init()
+	// ptsanee.Init()
+	// ultratsanee.Init()
 }
 
 var debugReplay = false
@@ -187,6 +196,162 @@ func filter2(items []util.Item) []util.Item {
 	return nItems
 }
 
+func RunAPISingleInc(detector string, withPostProcess bool, trace string, n uint64) {
+	traceReplay.EvListener = []traceReplay.EventListener{algos.GetDetector(detector)}
+
+	items := make(chan *util.Item, 100000)
+	go traceParser.ParseJTracevInc(trace, n, items)
+
+	steps := 0
+	//complete := len(items)
+	stepBarrier := 5000
+
+	SignalList2 := make(map[uint32]*util.Item)
+
+	var event util.SyncPair
+	t1 := time.Now()
+	for it := range items {
+		if debugReplay {
+			fmt.Println(it)
+		}
+
+		op := it.Ops[0]
+		if op.Kind&util.WRITE > 0 || op.Kind&util.READ > 0 {
+			event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, Write: op.Kind&util.WRITE > 0,
+				Read: op.Kind&util.READ > 0, Ev: it}
+		} else if op.Kind&util.ATOMICWRITE > 0 || op.Kind&util.ATOMICREAD > 0 {
+			event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, AtomicWrite: op.Kind&util.WRITE > 0,
+				AtomicRead: op.Kind&util.READ > 0, Ev: it}
+		} else if op.Kind&util.SIG > 0 {
+			SignalList2[op.Ch] = it
+			event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsFork: true, Ev: it}
+		} else if op.Kind&util.WAIT > 0 {
+			_, ok := SignalList2[op.Ch]
+			if ok {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsWait: true, Ev: it}
+			}
+			// } else if op.Kind&util.PREBRANCH > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPreBranch: true, Ev: it}
+			// } else if op.Kind&util.POSTBRANCH > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPostBranch: true, Ev: it}
+			// } else if op.Kind&util.NT > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNT: true, Ev: it}
+			// } else if op.Kind&util.NTWT > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNTWT: true, Ev: it}
+		} else if op.BufSize > 0 {
+			if op.Mutex == util.LOCK {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, Lock: true, AsyncSend: true, Ev: it}
+			} else if op.Mutex == util.UNLOCK {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, Unlock: true, AsyncRcv: true, Ev: it}
+			}
+		}
+
+		steps++
+		if steps%stepBarrier == 0 {
+			fmt.Printf("\r%v/%v", steps, "?")
+		}
+
+		if debugReplay {
+			fmt.Println(event)
+		}
+		for _, l := range traceReplay.EvListener {
+			l.Put(&event)
+		}
+	}
+
+	t2 := time.Now()
+	fmt.Println("Phase1 Time:", t2.Sub(t1))
+
+	if withPostProcess {
+		t1 := time.Now()
+		for _, l := range traceReplay.EvListener {
+			l.Put(&util.SyncPair{PostProcess: true})
+		}
+		t2 := time.Now()
+		fmt.Println("PostProcessing Time:", t2.Sub(t1))
+	}
+	report.ReportNumbers()
+}
+
+func RunAPISingleIncDouble(detector string, withPostProcess bool, trace string, n uint64) {
+	traceReplay.EvListener = []traceReplay.EventListener{algos.GetDetector(detector)}
+
+	for i := 0; i < 2; i++ {
+		items := make(chan *util.Item, 100000)
+		go traceParser.ParseJTracevInc(trace, n, items)
+
+		steps := 0
+		//complete := len(items)
+		stepBarrier := 5000
+
+		SignalList2 := make(map[uint32]*util.Item)
+
+		var event util.SyncPair
+		t1 := time.Now()
+		for it := range items {
+			if debugReplay {
+				fmt.Println(it)
+			}
+
+			op := it.Ops[0]
+			if op.Kind&util.WRITE > 0 || op.Kind&util.READ > 0 {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, Write: op.Kind&util.WRITE > 0,
+					Read: op.Kind&util.READ > 0, Ev: it}
+			} else if op.Kind&util.ATOMICWRITE > 0 || op.Kind&util.ATOMICREAD > 0 {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, AtomicWrite: op.Kind&util.WRITE > 0,
+					AtomicRead: op.Kind&util.READ > 0, Ev: it}
+			} else if op.Kind&util.SIG > 0 {
+				SignalList2[op.Ch] = it
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsFork: true, Ev: it}
+			} else if op.Kind&util.WAIT > 0 {
+				_, ok := SignalList2[op.Ch]
+				if ok {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsWait: true, Ev: it}
+				}
+				// } else if op.Kind&util.PREBRANCH > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPreBranch: true, Ev: it}
+				// } else if op.Kind&util.POSTBRANCH > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPostBranch: true, Ev: it}
+				// } else if op.Kind&util.NT > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNT: true, Ev: it}
+				// } else if op.Kind&util.NTWT > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNTWT: true, Ev: it}
+			} else if op.BufSize > 0 {
+				if op.Mutex == util.LOCK {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, Lock: true, AsyncSend: true, Ev: it}
+				} else if op.Mutex == util.UNLOCK {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, Unlock: true, AsyncRcv: true, Ev: it}
+				}
+			}
+
+			steps++
+			if steps%stepBarrier == 0 {
+				fmt.Printf("\r%v/%v", steps, "?")
+			}
+
+			if debugReplay {
+				fmt.Println(event)
+			}
+			for _, l := range traceReplay.EvListener {
+				l.Put(&event)
+			}
+		}
+
+		t2 := time.Now()
+		fmt.Println("Phase1 Time:", t2.Sub(t1))
+
+		if withPostProcess {
+			t1 := time.Now()
+			for _, l := range traceReplay.EvListener {
+				l.Put(&util.SyncPair{PostProcess: true})
+			}
+			t2 := time.Now()
+			fmt.Println("PostProcessing Time:", t2.Sub(t1))
+		}
+		report.ReportNumbers()
+	}
+}
+
 func RunAPISingle(items []util.Item, detector string, filter uint64, withPostProcess bool) {
 	if filter > 0 {
 		fmt.Println("Item count before:", len(items))
@@ -229,6 +394,14 @@ func RunAPISingle(items []util.Item, detector string, filter uint64, withPostPro
 			if ok {
 				event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsWait: true, Ev: &items[i]}
 			}
+			// } else if op.Kind&util.PREBRANCH > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPreBranch: true, Ev: &items[i]}
+			// } else if op.Kind&util.POSTBRANCH > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPostBranch: true, Ev: &items[i]}
+			// } else if op.Kind&util.NT > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNT: true, Ev: &items[i]}
+			// } else if op.Kind&util.NTWT > 0 {
+			// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNTWT: true, Ev: &items[i]}
 		} else if op.BufSize > 0 {
 			if op.Mutex == util.LOCK {
 				event = util.SyncPair{T1: it.Thread, T2: op.Ch, Lock: true, AsyncSend: true, Ev: &items[i]}
@@ -261,6 +434,92 @@ func RunAPISingle(items []util.Item, detector string, filter uint64, withPostPro
 		fmt.Println("PostProcessing Time:", t2.Sub(t1))
 	}
 	report.ReportNumbers()
+}
+
+func RunAPISingleDouble(items []util.Item, detector string, filter uint64, withPostProcess bool) {
+	if filter > 0 {
+		fmt.Println("Item count before:", len(items))
+		if filter == 1 || filter == 2 {
+			items = filter1(items)
+		}
+		if filter == 2 {
+			items = filter2(items)
+		}
+		fmt.Println("Item count after:", len(items))
+	}
+
+	traceReplay.EvListener = []traceReplay.EventListener{algos.GetDetector(detector)}
+
+	for i := 0; i < 2; i++ {
+		steps := 0
+		complete := len(items)
+		stepBarrier := (complete / 20) + 1
+
+		SignalList2 := make(map[uint32]*util.Item)
+
+		var event util.SyncPair
+		t1 := time.Now()
+		for i, it := range items {
+			if debugReplay {
+				fmt.Println(it)
+			}
+
+			op := it.Ops[0]
+			if op.Kind&util.WRITE > 0 || op.Kind&util.READ > 0 {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, Write: op.Kind&util.WRITE > 0,
+					Read: op.Kind&util.READ > 0, Ev: &items[i]}
+			} else if op.Kind&util.ATOMICWRITE > 0 || op.Kind&util.ATOMICREAD > 0 {
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, DataAccess: true, AtomicWrite: op.Kind&util.WRITE > 0,
+					AtomicRead: op.Kind&util.READ > 0, Ev: &items[i]}
+			} else if op.Kind&util.SIG > 0 {
+				SignalList2[op.Ch] = &items[i]
+				event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsFork: true, Ev: &items[i]}
+			} else if op.Kind&util.WAIT > 0 {
+				_, ok := SignalList2[op.Ch]
+				if ok {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsWait: true, Ev: &items[i]}
+				}
+				// } else if op.Kind&util.PREBRANCH > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPreBranch: true, Ev: &items[i]}
+				// } else if op.Kind&util.POSTBRANCH > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsPostBranch: true, Ev: &items[i]}
+				// } else if op.Kind&util.NT > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNT: true, Ev: &items[i]}
+				// } else if op.Kind&util.NTWT > 0 {
+				// 	event = util.SyncPair{T1: it.Thread, T2: op.Ch, IsNTWT: true, Ev: &items[i]}
+			} else if op.BufSize > 0 {
+				if op.Mutex == util.LOCK {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, Lock: true, AsyncSend: true, Ev: &items[i]}
+				} else if op.Mutex == util.UNLOCK {
+					event = util.SyncPair{T1: it.Thread, T2: op.Ch, Unlock: true, AsyncRcv: true, Ev: &items[i]}
+				}
+			}
+
+			steps++
+			if steps%stepBarrier == 0 {
+				fmt.Printf("\r%v/%v", steps, complete)
+			}
+
+			if debugReplay {
+				fmt.Println(event)
+			}
+			for _, l := range traceReplay.EvListener {
+				l.Put(&event)
+			}
+		}
+		t2 := time.Now()
+		fmt.Println("Phase1 Time:", t2.Sub(t1))
+
+		if withPostProcess {
+			t1 := time.Now()
+			for _, l := range traceReplay.EvListener {
+				l.Put(&util.SyncPair{PostProcess: true})
+			}
+			t2 := time.Now()
+			fmt.Println("PostProcessing Time:", t2.Sub(t1))
+		}
+		report.ReportNumbers()
+	}
 }
 
 func LSDetectors() {
@@ -305,317 +564,3 @@ func RunAPIV2(items []util.Item, detector string, filter uint64) {
 	fmt.Println("Results with filter level:", filter)
 	report.ReportNumbers()
 }
-
-//OLD STUFF
-// func RunFastTrack(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-
-// 	threads := createThreads(items)
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&fastTrack.ListenerSelect{},
-// 		&fastTrack.ListenerSync{},
-// 		&fastTrack.ListenerAsyncSnd{},
-// 		&fastTrack.ListenerAsyncRcv{},
-// 		&fastTrack.ListenerChanClose{},
-// 		&fastTrack.ListenerOpClosedChan{},
-// 		&fastTrack.ListenerDataAccess2{},
-// 		&fastTrack.ListenerGoFork{},
-// 		&fastTrack.ListenerGoWait{},
-// 	}
-// 	replay(m, json, plain, bench)
-// }
-
-// func RunGoTrack(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-
-// 	threads := createThreads(items)
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&goTrack.ListenerSelect{},
-// 		&goTrack.ListenerSync{},
-// 		&goTrack.ListenerAsyncSnd{},
-// 		&goTrack.ListenerAsyncRcv{},
-// 		&goTrack.ListenerChanClose{},
-// 		&goTrack.ListenerOpClosedChan{},
-// 		&goTrack.ListenerDataAccess2{},
-// 		&goTrack.ListenerGoFork{},
-// 		&goTrack.ListenerGoWait{},
-// 	}
-// 	replay(m, json, plain, bench)
-// }
-
-// func RunThreadSanitizer(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-// 	// for _, it := range items {
-// 	// 	fmt.Println(it)
-// 	// }
-// 	threads := createThreads(items)
-
-// 	// for _, t := range threads {
-// 	// 	fmt.Println(t.ID)
-// 	// 	for _, e := range t.Events {
-// 	// 		fmt.Printf("\t%v\n", e)
-// 	// 	}
-// 	// }
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&threadSanitizer.ListenerSelect{},
-// 		&threadSanitizer.ListenerSync{},
-// 		&threadSanitizer.ListenerAsyncSnd{},
-// 		&threadSanitizer.ListenerAsyncRcv{},
-// 		&threadSanitizer.ListenerChanClose{},
-// 		&threadSanitizer.ListenerOpClosedChan{},
-// 		&threadSanitizer.ListenerDataAccess{},
-// 		&threadSanitizer.ListenerGoFork{},
-// 		&threadSanitizer.ListenerGoWait{},
-// 	}
-// 	replay(m, json, plain, bench)
-// }
-
-// func RunEraser(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-// 	threads := createThreads(items)
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&graphbuilder.ListenerGoFork{},
-// 		&graphbuilder.ListenerGoWait{},
-// 		&graphbuilder.ListenerSync{},
-// 		&graphbuilder.ListenerAsyncSnd{},
-// 		&graphbuilder.ListenerAsyncRcv{},
-// 		&graphbuilder.ListenerDataAccess2{},
-// 		&eraser.ListenerSelect{},
-// 		&eraser.ListenerSync{},
-// 		&eraser.ListenerAsyncSnd{},
-// 		&eraser.ListenerAsyncRcv{},
-// 		&eraser.ListenerChanClose{},
-// 		&eraser.ListenerOpClosedChan{},
-// 		&eraser.ListenerDataAccess{},
-// 		&eraser.ListenerGoFork{},
-// 		&eraser.ListenerGoWait{},
-// 	}
-// 	replay(m, json, plain, bench)
-
-// 	// for _, it := range items {
-// 	// 	if it.Ops[0].Kind&util.PREPARE > 0 {
-// 	// 		continue
-// 	// 	}
-// 	// 	fmt.Println(it)
-// 	// 	fmt.Println("\t", it.InternalNext)
-// 	// 	for _, x := range it.Next {
-// 	// 		fmt.Println("\t", x)
-// 	// 	}
-// 	// 	fmt.Println("prev", it.Prev)
-// 	// 	fmt.Println("----")
-// 	// }
-// 	// for _, it := range graphbuilder.EmulatedThreads {
-// 	// 	for _, buf := range it.Slots {
-// 	// 		for _, ev := range buf.Events {
-// 	// 			fmt.Println(ev)
-// 	// 			fmt.Println("\t INTERNAL", ev.InternalNext)
-// 	// 			for _, x := range ev.Next {
-// 	// 				fmt.Println("\t", x)
-// 	// 			}
-
-// 	// 			fmt.Println("-----")
-// 	// 		}
-// 	// 	}
-// 	// }
-
-// 	for i, v := range report.UniqueDataRaces {
-// 		fmt.Printf("%v\n\t%v\n\t%v\n\n", i, v.A, v.B)
-// 		if CheckAlternatives2(v.A, v.B, graphbuilder.EmulatedThreads) {
-// 			//		if Check(v.A, v.B) {
-// 			fmt.Println("Real race!")
-// 		} else {
-// 			fmt.Println("Fake news!")
-// 		}
-// 	}
-// }
-
-// func RunRaceTrack(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-// 	threads := createThreads(items)
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&raceTrack.ListenerSelect{},
-// 		&raceTrack.ListenerSync{},
-// 		&raceTrack.ListenerAsyncSnd{},
-// 		&raceTrack.ListenerAsyncRcv{},
-// 		&raceTrack.ListenerChanClose{},
-// 		&raceTrack.ListenerOpClosedChan{},
-// 		&raceTrack.ListenerDataAccess{},
-// 		&raceTrack.ListenerGoStart{},
-// 	}
-// 	replay(m, json, plain, bench)
-// }
-
-// func RunTwinTrack(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-// 	threads := createThreads(items)
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&twinTrack.ListenerSelect{},
-// 		&twinTrack.ListenerSync{},
-// 		&twinTrack.ListenerAsyncSnd{},
-// 		&twinTrack.ListenerAsyncRcv{},
-// 		&twinTrack.ListenerChanClose{},
-// 		&twinTrack.ListenerOpClosedChan{},
-// 		&twinTrack.ListenerDataAccess{},
-// 		&twinTrack.ListenerGoStart{},
-// 	}
-// 	replay(m, json, plain, bench)
-// }
-
-// func RunNoName(tracePath string, json, plain, bench bool) {
-// 	items := parser.ParseTracev2(tracePath)
-// 	// for _, it := range items {
-// 	// 	fmt.Println(it)
-// 	// }
-// 	threads := createThreads(items)
-
-// 	// for _, t := range threads {
-// 	// 	fmt.Println(t.ID)
-// 	// 	for _, e := range t.Events {
-// 	// 		fmt.Printf("\t%v\n", e)
-// 	// 	}
-// 	// }
-
-// 	asyncChans := getAsyncChans2(items)
-// 	closedChans := make(map[uint64]struct{})
-// 	closedChans[0] = struct{}{}
-// 	m := &traceReplay.Machine{threads, nil,
-// 		closedChans, make(map[uint64]util.VectorClock),
-// 		false,
-// 		nil, nil,
-// 		make(map[uint64]*util.VarState3),
-// 		asyncChans,
-// 		make(map[uint64]*util.ChanState),
-// 		make([]traceReplay.SelectStore, 0), 1, 1, 0, make([]*util.Item, 0),
-// 		make(map[uint64]*util.Item)}
-// 	traceReplay.EvListener = []traceReplay.EventListener{
-// 		&graphbuilder.ListenerGoFork{},
-// 		&graphbuilder.ListenerGoWait{},
-// 		&graphbuilder.ListenerSync{},
-// 		&graphbuilder.ListenerAsyncSnd{},
-// 		&graphbuilder.ListenerAsyncRcv{},
-// 		&graphbuilder.ListenerDataAccess2{},
-// 		&noname.ListenerSelect{},
-// 		&noname.ListenerSync{},
-// 		&noname.ListenerAsyncSnd{},
-// 		&noname.ListenerAsyncRcv{},
-// 		&noname.ListenerChanClose{},
-// 		&noname.ListenerOpClosedChan{},
-// 		&noname.ListenerDataAccess2{},
-// 		&noname.ListenerGoFork{},
-// 		&noname.ListenerGoWait{},
-// 	}
-// 	replay(m, json, plain, bench)
-
-// 	//print graph
-// 	for _, it := range items {
-// 		if it.Ops[0].Kind&util.PREPARE > 0 {
-// 			continue
-// 		}
-// 		fmt.Println(it)
-// 		for _, x := range it.Next {
-// 			fmt.Println("\t", x)
-// 		}
-// 		fmt.Println("prev", it.Prev)
-// 		fmt.Println("----")
-// 	}
-// 	for _, it := range graphbuilder.EmulatedThreads {
-// 		for _, buf := range it.Slots {
-// 			for _, ev := range buf.Events {
-// 				fmt.Println(ev)
-// 				for _, x := range ev.Next {
-// 					fmt.Println("\t", x)
-// 				}
-// 				fmt.Println("-----")
-// 			}
-// 		}
-// 	}
-
-// 	for i, v := range report.UniqueDataRaces {
-// 		fmt.Printf("%v\n\t%v\n\t%v\n\n", i, v.A, v.B)
-// 		if CheckAlternatives(v.A, v.B, graphbuilder.EmulatedThreads) {
-// 			//		if Check(v.A, v.B) {
-// 			fmt.Println("Real race!")
-// 		} else {
-// 			fmt.Println("Fake news!")
-// 		}
-// 	}
-
-// }
