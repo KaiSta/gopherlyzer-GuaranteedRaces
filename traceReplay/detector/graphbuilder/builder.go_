@@ -1,0 +1,247 @@
+package graphbuilder
+
+import (
+	"../../util"
+	"../analysis"
+	"../traceReplay"
+)
+
+var DoPop bool
+var LastWrite map[uint64]*util.Item
+var LastRcv map[uint64]*util.Item
+var LastSnd map[uint64]*util.Item
+
+type ListenerAsyncSnd struct{}
+type ListenerAsyncRcv struct{}
+type ListenerSync struct{}
+type ListenerDataAccess struct{}
+type ListenerDataAccess2 struct{}
+type ListenerGoStart struct{}
+type ListenerGoFork struct{}
+type ListenerGoWait struct{}
+
+type Buffer struct {
+	Slots []util.Thread
+}
+
+var EmulatedThreads map[uint64]Buffer
+
+type EventCollector struct{}
+
+var listeners []traceReplay.EventListener
+
+func init() {
+	EmulatedThreads = make(map[uint64]Buffer)
+	LastWrite = make(map[uint64]*util.Item)
+	LastRcv = make(map[uint64]*util.Item)
+	LastSnd = make(map[uint64]*util.Item)
+
+	listeners = []traceReplay.EventListener{
+		&ListenerAsyncSnd{},
+		&ListenerAsyncRcv{},
+		&ListenerSync{},
+		&ListenerDataAccess2{},
+		//	&ListenerSelect{},
+		&ListenerGoFork{},
+		&ListenerGoWait{},
+	}
+	algos.RegisterDetector("graphbuilder", &EventCollector{})
+}
+
+func (l *EventCollector) Put(p *util.SyncPair) {
+	for _, l := range listeners {
+		l.Put(p)
+	}
+}
+
+func (l *ListenerAsyncSnd) Put(p *util.SyncPair) {
+	if !p.AsyncSend {
+		return
+	}
+
+	t1 := m.Threads[p.T1]
+	ev := t1.Events[1] //post
+
+	ch := m.AsyncChans2[p.T2]
+	if ch.Count == ch.BufSize { //snd ok?
+		return
+	}
+
+	//determine bufferslot
+	bufslot := ev.Ops[0].BufField % ch.BufSize
+
+	// get buffer / graph channel
+	gch, ok := EmulatedThreads[p.T2]
+	if !ok {
+		gch = Buffer{make([]util.Thread, ch.BufSize)}
+	}
+	slot := gch.Slots[bufslot]
+
+	snd := &util.Item{Thread: ev.Ops[0].Ch,
+		Ops: []util.Operation{{Ch: ev.Ops[0].Ch,
+			Kind:    util.POST | util.SEND,
+			BufSize: ch.BufSize, BufField: ev.Ops[0].BufField}},
+		Next: []*util.Item{ev}} //connects artifical send with real node bufferEv->snd
+
+	//connect real with artifical node
+	ev.Next = append(ev.Next, snd) //snd -> bufferEv
+	//connect previous slot node with current (prev rcv on slot to current snd)
+	if len(slot.Events) > 0 {
+		slot.Events[len(slot.Events)-1].InternalNext = snd
+	}
+
+	//connect previous send with current send
+	prev := LastSnd[p.T2]
+	if prev != nil {
+		prev.NextSndRcv = snd
+	}
+	LastSnd[p.T2] = snd
+
+	//add current node to slot
+	slot.Events = append(slot.Events, snd)
+	//update collections
+	gch.Slots[bufslot] = slot
+	EmulatedThreads[ev.Ops[0].Ch] = gch
+
+	if DoPop {
+		t1 := m.Threads[p.T1]
+		t1.Pop() //pre
+		t1.Pop() //post
+		m.Threads[p.T1] = t1
+	}
+}
+func (l *ListenerAsyncRcv) Put(p *util.SyncPair) {
+	if !p.AsyncRcv {
+		return
+	}
+	t1 := m.Threads[p.T1]
+	ev := t1.Events[1] //post
+	ch := m.AsyncChans2[p.T2]
+
+	if ch.Count == 0 { //nothing to receive
+		return
+	}
+
+	//determine bufferslot
+	bufslot := ev.Ops[0].BufField % ch.BufSize
+
+	// get graph channel
+	gch, ok := EmulatedThreads[p.T2]
+	if !ok {
+		gch = Buffer{make([]util.Thread, ch.BufSize)}
+	}
+	slot := gch.Slots[bufslot]
+
+	rcv := &util.Item{Thread: ev.Ops[0].Ch,
+		Ops: []util.Operation{{Ch: ev.Ops[0].Ch,
+			Kind:    util.POST | util.RCV,
+			BufSize: ch.BufSize, BufField: ev.Ops[0].BufField}},
+		Next: []*util.Item{ev}} //bufferEv -> rcv
+
+	//connect real with artifical node
+	ev.Next = append(ev.Next, rcv) //rcv -> bufferEv
+	//connect previous slot node with current
+	if len(slot.Events) > 0 {
+		slot.Events[len(slot.Events)-1].InternalNext = rcv //snd->rcv
+		rcv.Prev = slot.Events[len(slot.Events)-1]
+	}
+	//add current node to slot
+	slot.Events = append(slot.Events, rcv)
+	//update collections
+	gch.Slots[bufslot] = slot
+	EmulatedThreads[ev.Ops[0].Ch] = gch
+
+	// connect rcv order
+	prev := LastRcv[p.T2]
+	if prev != nil {
+		prev.NextSndRcv = rcv
+	}
+	LastRcv[p.T2] = rcv
+
+	//update the traceReplay.Machine state
+	if DoPop {
+		t1.Pop() //pre
+		t1.Pop() //post
+		m.Threads[t1.ID] = t1
+	}
+}
+
+func (l *ListenerSync) Put(p *util.SyncPair) {
+	if !p.Sync {
+		return
+	}
+
+	t1 := m.Threads[p.T1]
+	t2 := m.Threads[p.T2]
+
+	t1.Events[1].Next = append(t1.Events[1].Next, t2.Events[1])
+	t2.Events[1].Next = append(t2.Events[1].Next, t1.Events[1])
+
+	if DoPop {
+		t1.Pop() //pre
+		t1.Pop() //post
+		t2.Pop() //pre
+		t2.Pop() //post
+	}
+
+	m.Threads[t1.ID] = t1
+	m.Threads[t2.ID] = t2
+}
+
+func (l *ListenerDataAccess2) Put(p *util.SyncPair) {
+	if !p.DataAccess {
+		return
+	}
+	thread := m.Threads[p.T1]
+	ev := thread.Peek()
+
+	if ev.Ops[0].Kind&util.WRITE > 0 {
+		LastWrite[p.T2] = ev
+	} else if ev.Ops[0].Kind&util.READ > 0 {
+		w := LastWrite[p.T2]
+		w.Next = append(w.Next, ev)
+		LastWrite[p.T2] = w
+	}
+
+	if DoPop {
+		thread.Pop()
+	}
+
+	m.Threads[p.T1] = thread
+}
+
+var signalList []*util.Item
+
+func (l *ListenerGoFork) Put(p *util.SyncPair) {
+	if !p.IsFork {
+		return
+	}
+	t1 := m.Threads[p.T1]
+	signalList = append(m.SignalList, t1.Peek())
+
+	if DoPop {
+		t1.Pop()
+		m.Threads[p.T1] = t1
+	}
+}
+
+func (l *ListenerGoWait) Put(p *util.SyncPair) {
+	if !p.IsWait {
+		return
+	}
+
+	t1 := m.Threads[p.T1]
+	ev := t1.Peek()
+
+	for i := range signalList {
+		if signalList[i].Ops[0].Ch == ev.Ops[0].Ch {
+			// found fitting signal for this wait
+			signalList[i].Next = append(signalList[i].Next, ev)
+			if DoPop {
+				t1.Pop()
+				m.Threads[p.T1] = t1
+			}
+			return
+		}
+	}
+}

@@ -1,0 +1,555 @@
+var openRaces []dataRace
+
+func (l *ListenerDataAccessOneRunSound) Put(p *util.SyncPair) {
+	if !p.DataAccess {
+		return
+	}
+
+	t1, ok := threads[p.T1]
+	if !ok {
+		t1 = newT(p.T1)
+	}
+
+	varstate, ok := variables[p.T2]
+	if !ok {
+		varstate = newVar()
+	}
+
+	varstate.current++
+	newFE := &dot{v: t1.vc.clone(), int: varstate.current, t: uint16(p.T1),
+		sourceRef: p.Ev.Ops[0].SourceRef, line: uint16(p.Ev.Ops[0].Line),
+		write: p.Write, ls: make(map[uint32]struct{}), pos: p.Ev.LocalIdx}
+	for _, k := range t1.ls { //copy lockset
+		newFE.ls[k] = struct{}{}
+	}
+
+	if p.Write {
+		newFrontier := make([]*dot, 0, len(varstate.frontier))
+		connectTo := make([]*dot, 0)
+
+		for _, f := range varstate.frontier {
+			k := f.v.get(uint32(f.t))
+			thi_at_j := t1.vc.get(uint32(f.t))
+
+			if k > thi_at_j {
+				newFrontier = append(newFrontier, f) // RW(x) =  {j#k | j#k ∈ RW(x) ∧ k > Th(i)[j]}
+
+				if !intersect(newFE.ls, f.ls) {
+					// report.ReportRace(report.Location{File: uint32(f.sourceRef), Line: uint32(f.line), W: f.write},
+					// 	report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: newFE.write}, false, 0)
+					if len(t1.deps) == 0 {
+						report.ReportRace(report.Location{File: uint32(f.sourceRef), Line: uint32(f.line), W: true},
+							report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: true}, false, 0)
+					} else {
+						openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: newFE, prevAcc: f})
+					}
+				}
+				visited := &bitset.BitSet{}
+				varstate.findRaces(newFE, f, visited, 0)
+
+			} else if k < thi_at_j {
+				connectTo = append(connectTo, f)
+			}
+		}
+
+		varstate.updateGraph3(newFE, connectTo)
+
+		newFrontier = append(newFrontier, newFE) // ∪{i#Th(i)[i]}
+		varstate.frontier = newFrontier
+
+		varstate.lastWrite = t1.vc.clone()
+		varstate.lwDot = newFE
+
+		for _, l := range t1.ls {
+			lk := locks[l]
+			clues := lockClues[l]
+			if clues.Get(lk.count) {
+				varstate.lastWrite = varstate.lastWrite.ssync(lk.hb)
+			} else { //lock clue does not contain infos for this open lock, so treat it as ?
+				varstate.lwOpenLocks = append(varstate.lwOpenLocks, intpair{vc: lk.hb, count: lk.count, lk: l})
+			}
+		}
+
+		list, ok := varstate.graph.get(newFE.int)
+		if ok && len(list) == 0 {
+			list = append(list, &startDot)
+			varstate.graph.add(newFE, list)
+		}
+	} else if p.Read {
+		if varstate.lwDot != nil { // != nil if a last write exists!
+			k := varstate.lwDot.v.get(uint32(varstate.lwDot.t)) //j#k
+			thi_at_j := t1.vc.get(uint32(varstate.lwDot.t))     //Th(i)[j]
+
+			if k > thi_at_j {
+				if !intersect(newFE.ls, varstate.lwDot.ls) {
+					if len(t1.deps) == 0 {
+						report.ReportRace(report.Location{File: uint32(varstate.lwDot.sourceRef), Line: uint32(varstate.lwDot.line), W: true},
+							report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: true}, false, 0)
+					} else {
+						xnode := &dot{v: t1.vc.clone(), int: varstate.current, t: uint16(p.T1),
+							sourceRef: p.Ev.Ops[0].SourceRef, line: uint16(p.Ev.Ops[0].Line),
+							write: p.Write, ls: make(map[uint32]struct{}), pos: p.Ev.LocalIdx}
+						for _, k := range t1.ls { //copy lockset
+							xnode.ls[k] = struct{}{}
+						}
+						openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: xnode, prevAcc: varstate.lwDot})
+					}
+				}
+			}
+
+			newFE.v = newFE.v.ssync(varstate.lastWrite) //sync with last write in advance, necessary for the graph analysis in the following loop!
+			t1.vc = t1.vc.ssync(varstate.lastWrite)
+			t1.deps = append([]intpair{}, varstate.lwOpenLocks...)
+		}
+		//	fmt.Println(newFE.v)
+		newFrontier := make([]*dot, 0, len(varstate.frontier))
+		connectTo := make([]*dot, 0)
+		for _, f := range varstate.frontier {
+			k := f.v.get(uint32(f.t))          //j#k
+			thi_at_j := t1.vc.get(uint32(f.t)) //Th(i)[j]
+
+			if k > thi_at_j {
+
+				newFrontier = append(newFrontier, f) // RW(x) =  {j]k | j]k ∈ RW(x) ∧ k > Th(i)[j]}
+
+				if f.write {
+
+					if !intersect(newFE.ls, f.ls) {
+						if len(t1.deps) == 0 {
+							report.ReportRace(report.Location{File: uint32(f.sourceRef), Line: uint32(f.line), W: true},
+								report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: true}, false, 0)
+						} else {
+							openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: newFE, prevAcc: f})
+						}
+					}
+
+					visited := &bitset.BitSet{}
+					varstate.findRaces(newFE, f, visited, 0)
+				}
+			} else {
+				if f.int > 0 {
+					connectTo = append(connectTo, f)
+				}
+				if f.write {
+					newFrontier = append(newFrontier, f)
+				}
+			}
+		}
+
+		//write-read sync
+		if varstate.lwDot != nil {
+			t1.vc = t1.vc.ssync(varstate.lastWrite) //Th(i) = max(Th(i),L W (x))
+
+			//update rel for each owned lock to contain the wrds that occurred in the current critical sections
+			for _, lk := range t1.ls {
+				lock := locks[lk]
+				lock.rel = lock.rel.ssync(varstate.lastWrite)
+				//lock.rel = lock.rel.ssync(t1.vc)
+				//lock.fullSync = true
+				locks[lk] = lock
+			}
+		}
+
+		for _, l := range t1.ls {
+			lkHistory := t1.csHistory[l]
+			nhistory := make([]vcPair, 0, len(lkHistory))
+
+			for _, h := range lkHistory {
+				localTimeForLastOwner := t1.vc.get(h.owner)
+				relTimeForLastOwner := h.rel.get(h.owner)
+
+				//read event is ordered within previous critical section
+				if h.acq.v < localTimeForLastOwner && localTimeForLastOwner < relTimeForLastOwner {
+					t1.vc = t1.vc.ssync(h.rel)
+					clue := lockClues[l]
+					lk := locks[l]
+					clue.Set(lk.count)
+					lockClues[l] = clue
+					lk.strongSync = true
+				}
+
+				if !(relTimeForLastOwner < localTimeForLastOwner) {
+					nhistory = append(nhistory, h)
+				}
+			}
+			t1.csHistory[l] = nhistory
+		}
+
+		varstate.updateGraph3(newFE, connectTo)
+
+		newFrontier = append(newFrontier, newFE) // ∪{i#Th(i)[i]}
+		varstate.frontier = newFrontier
+
+		//connect to artifical start dot if no connection exists
+
+		list, ok := varstate.graph.get(newFE.int)
+		if ok && len(list) == 0 {
+			list = append(list, &startDot)
+			varstate.graph.add(newFE, list)
+		}
+	} else { //volatile synchronize
+		vol, ok := volatiles[p.T2]
+		if !ok {
+			vol = newvc2()
+		}
+		t1.vc = t1.vc.ssync(vol)
+		vol = t1.vc.clone()
+
+		volatiles[p.T2] = vol
+	}
+
+	t1.vc = t1.vc.add(p.T1, 1)
+	threads[p.T1] = t1
+	variables[p.T2] = varstate
+}
+
+func (l *ListenerDataAccessWRDW1) Put(p *util.SyncPair) {
+	if !p.DataAccess {
+		return
+	}
+
+	t1, ok := threads[p.T1]
+	if !ok {
+		t1 = newT(p.T1)
+	}
+
+	varstate, ok := variables[p.T2]
+	if !ok {
+		varstate = newVar()
+	}
+
+	varstate.current++
+	newFE := &dot{v: t1.vc.clone(), int: varstate.current, t: uint16(p.T1),
+		sourceRef: p.Ev.Ops[0].SourceRef, line: uint16(p.Ev.Ops[0].Line),
+		write: p.Write, ls: make(map[uint32]struct{}), pos: p.Ev.LocalIdx}
+	for _, k := range t1.ls { //copy lockset
+		newFE.ls[k] = struct{}{}
+	}
+
+	if p.Write {
+		newFrontier := make([]*dot, 0, len(varstate.frontier))
+
+		for _, f := range varstate.frontier {
+			k := f.v.get(uint32(f.t))
+			thi_at_j := t1.vc.get(uint32(f.t))
+
+			if k > thi_at_j {
+				newFrontier = append(newFrontier, f) // RW(x) =  {j#k | j#k ∈ RW(x) ∧ k > Th(i)[j]}
+
+				if !intersect(newFE.ls, f.ls) {
+					if len(t1.deps) == 0 {
+						report.ReportRace(report.Location{File: uint32(f.sourceRef), Line: uint32(f.line), W: true},
+							report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: f.write}, false, 0)
+					} else {
+						openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: newFE, prevAcc: f})
+					}
+				}
+			}
+		}
+
+		newFrontier = append(newFrontier, newFE) // ∪{i#Th(i)[i]}
+		varstate.frontier = newFrontier
+
+		varstate.lastWrite = t1.vc.clone()
+		varstate.lwDot = newFE
+
+		for _, l := range t1.ls {
+			lk := locks[l]
+			clues := lockClues[l]
+			if clues.Get(lk.count) {
+				varstate.lastWrite = varstate.lastWrite.ssync(lk.hb)
+			} else { //lock clue does not contain infos for this open lock, so treat it as ?
+				varstate.lwOpenLocks = append(varstate.lwOpenLocks, intpair{vc: lk.hb, count: lk.count, lk: l})
+			}
+		}
+
+		list, ok := varstate.graph.get(newFE.int)
+		if ok && len(list) == 0 {
+			list = append(list, &startDot)
+			varstate.graph.add(newFE, list)
+		}
+	} else if p.Read {
+		if varstate.lwDot != nil { // != nil if a last write exists!
+			k := varstate.lwDot.v.get(uint32(varstate.lwDot.t)) //j#k
+			thi_at_j := t1.vc.get(uint32(varstate.lwDot.t))     //Th(i)[j]
+
+			if k > thi_at_j {
+				if !intersect(newFE.ls, varstate.lwDot.ls) {
+					if len(t1.deps) == 0 {
+						report.ReportRace(report.Location{File: uint32(varstate.lwDot.sourceRef), Line: uint32(varstate.lwDot.line), W: true},
+							report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: true}, false, 0)
+					} else {
+						xnode := &dot{v: t1.vc.clone(), int: varstate.current, t: uint16(p.T1),
+							sourceRef: p.Ev.Ops[0].SourceRef, line: uint16(p.Ev.Ops[0].Line),
+							write: p.Write, ls: make(map[uint32]struct{}), pos: p.Ev.LocalIdx}
+						for _, k := range t1.ls { //copy lockset
+							xnode.ls[k] = struct{}{}
+						}
+						openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: xnode, prevAcc: varstate.lwDot})
+					}
+				}
+			}
+
+			newFE.v = newFE.v.ssync(varstate.lastWrite) //sync with last write in advance, necessary for the graph analysis in the following loop!
+			t1.vc = t1.vc.ssync(varstate.lastWrite)
+			t1.deps = append([]intpair{}, varstate.lwOpenLocks...)
+		}
+		//	fmt.Println(newFE.v)
+		newFrontier := make([]*dot, 0, len(varstate.frontier))
+		connectTo := make([]*dot, 0)
+		for _, f := range varstate.frontier {
+			k := f.v.get(uint32(f.t))          //j#k
+			thi_at_j := t1.vc.get(uint32(f.t)) //Th(i)[j]
+
+			if k > thi_at_j {
+
+				newFrontier = append(newFrontier, f) // RW(x) =  {j]k | j]k ∈ RW(x) ∧ k > Th(i)[j]}
+
+				if f.write {
+
+					if !intersect(newFE.ls, f.ls) {
+						if len(t1.deps) == 0 {
+							report.ReportRace(report.Location{File: uint32(f.sourceRef), Line: uint32(f.line), W: true},
+								report.Location{File: p.Ev.Ops[0].SourceRef, Line: p.Ev.Ops[0].Line, W: true}, false, 0)
+						} else {
+							openRaces = append(openRaces, dataRace{deps: append([]intpair{}, t1.deps...), raceAcc: newFE, prevAcc: f})
+						}
+					}
+
+					visited := &bitset.BitSet{}
+					varstate.findRaces(newFE, f, visited, 0)
+				}
+			} else {
+				if f.int > 0 {
+					connectTo = append(connectTo, f)
+				}
+				if f.write {
+					newFrontier = append(newFrontier, f)
+				}
+			}
+		}
+
+		//write-read sync
+		if varstate.lwDot != nil {
+			t1.vc = t1.vc.ssync(varstate.lastWrite) //Th(i) = max(Th(i),L W (x))
+
+			//update rel for each owned lock to contain the wrds that occurred in the current critical sections
+			// for _, lk := range t1.ls {
+			// 	lock := locks[lk]
+			// 	lock.rel = lock.rel.ssync(varstate.lastWrite)
+			// 	//lock.rel = lock.rel.ssync(t1.vc)
+			// 	//lock.fullSync = true
+			// 	locks[lk] = lock
+			// }
+		}
+
+		for _, l := range t1.ls {
+			lkHistory := t1.csHistory[l]
+			nhistory := make([]vcPair, 0, len(lkHistory))
+
+			for _, h := range lkHistory {
+				localTimeForLastOwner := t1.vc.get(h.owner)
+				relTimeForLastOwner := h.rel.get(h.owner)
+
+				//read event is ordered within previous critical section
+				if h.acq.v < localTimeForLastOwner && localTimeForLastOwner < relTimeForLastOwner {
+					t1.vc = t1.vc.ssync(h.rel)
+					clue := lockClues[l]
+					lk := locks[l]
+					clue.Set(lk.count)
+					lockClues[l] = clue
+					lk.strongSync = true
+				}
+
+				if !(relTimeForLastOwner < localTimeForLastOwner) {
+					nhistory = append(nhistory, h)
+				}
+			}
+			t1.csHistory[l] = nhistory
+		}
+
+		varstate.updateGraph3(newFE, connectTo)
+
+		newFrontier = append(newFrontier, newFE) // ∪{i#Th(i)[i]}
+		varstate.frontier = newFrontier
+
+		//connect to artifical start dot if no connection exists
+
+		list, ok := varstate.graph.get(newFE.int)
+		if ok && len(list) == 0 {
+			list = append(list, &startDot)
+			varstate.graph.add(newFE, list)
+		}
+	} else { //volatile synchronize
+		vol, ok := volatiles[p.T2]
+		if !ok {
+			vol = newvc2()
+		}
+		t1.vc = t1.vc.ssync(vol)
+		vol = t1.vc.clone()
+
+		volatiles[p.T2] = vol
+	}
+
+	t1.vc = t1.vc.add(p.T1, 1)
+	threads[p.T1] = t1
+	variables[p.T2] = varstate
+}
+
+// problem with wrd races. the dots contain the write-read dependency sync already, so they are no longer concurrent and are removed!
+func (l *ListenerAsyncRcv2) Put(p *util.SyncPair) {
+	if !p.AsyncRcv {
+		return
+	}
+
+	if !p.Unlock {
+		return
+	}
+
+	t1, ok := threads[p.T1]
+	if !ok {
+		t1 = newT(p.T1)
+	}
+
+	lock, ok := locks[p.T2]
+	if !ok {
+		lock = newL()
+	}
+
+	nopenRaces := make([]dataRace, 0)
+	for _, r := range openRaces {
+		ndeps := make([]intpair, 0)
+		for i := range r.deps {
+			if r.deps[i].lk == p.T2 && r.deps[i].count < len(lock.history) { //== lock.count {
+				if lock.strongSync { //fill in blanks
+					r.raceAcc.v = r.raceAcc.v.ssync(lock.history[r.deps[i].count].rel) //r.raceAcc.v.ssync(lock.hb)
+				}
+			} else if r.deps[i].lk == p.T2 && r.deps[i].count == lock.count {
+				if lock.strongSync { //fill in blanks
+					r.raceAcc.v = r.raceAcc.v.ssync(lock.hb)
+				}
+			} else {
+				ndeps = append(ndeps, r.deps[i])
+			}
+		}
+		r.deps = ndeps
+		if len(r.deps) == 0 {
+			k := r.prevAcc.v.get(uint32(r.prevAcc.t))        //j#k
+			thi_at_j := r.raceAcc.v.get(uint32(r.prevAcc.t)) //Th(i)[j]
+
+			if k > thi_at_j {
+				if !intersect(r.raceAcc.ls, r.prevAcc.ls) {
+					report.ReportRace(report.Location{File: uint32(r.prevAcc.sourceRef), Line: uint32(r.prevAcc.line), W: true},
+						report.Location{File: r.raceAcc.sourceRef, Line: uint32(r.raceAcc.line), W: true}, false, 0)
+				}
+			}
+		} else {
+			nopenRaces = append(nopenRaces, r)
+		}
+	}
+	openRaces = nopenRaces
+
+	lock.hb = lock.hb.ssync(t1.vc)
+	if lock.fullSync {
+		lock.rel = lock.rel.ssync(t1.vc)
+	}
+
+	if len(t1.ls) > 0 { //remove lock from lockset
+		t1.ls = t1.ls[:len(t1.ls)-1]
+	}
+
+	nPair := vcPair{owner: p.T1, acq: lock.acq, rel: lock.hb.clone()}
+	lock.history = append(lock.history, nPair)
+	cshist := csHistory[p.T2]
+	cshist = append(cshist, nPair)
+	csHistory[p.T2] = cshist
+
+	for k, t := range threads {
+		if k != p.T1 {
+			list, ok := t.csHistory[p.T2]
+			if !ok {
+				list = make([]vcPair, 0)
+			}
+			list = append(list, nPair)
+			t.csHistory[p.T2] = list
+		}
+		for i := 0; i < len(t.deps); i++ {
+			if t.deps[i].lk == p.T2 && t.deps[i].count < lock.count {
+				tmp := t.deps[0]
+				t.deps[0] = t.deps[i]
+				t.deps[i] = tmp
+				t.deps = t.deps[1:]
+			}
+		}
+
+	}
+
+	lock.count++
+
+	lock.strongSync = false
+	lock.fullSync = false
+
+	t1.vc = t1.vc.add(p.T1, 1)
+	threads[p.T1] = t1
+	locks[p.T2] = lock
+}
+
+func (l *ListenerAsyncSnd2) Put(p *util.SyncPair) {
+	if !p.AsyncSend {
+		return
+	}
+
+	if !p.Lock {
+		return
+	}
+
+	t1, ok := threads[p.T1]
+	if !ok {
+		t1 = newT(p.T1)
+	}
+
+	lock, ok := locks[p.T2]
+	if !ok {
+		lock = newL()
+	}
+
+	//sync with rel
+	t1.vc = t1.vc.ssync(lock.rel)
+
+	lock.acq = newEpoch(p.T1, t1.vc.get(p.T1))
+
+	t1.ls = append(t1.ls, p.T2)
+
+	if len(t1.ls) > 1 {
+		multiLock++
+	} else {
+		singleLock++
+	}
+
+	if len(t1.ls) > maxMulti {
+		maxMulti = len(t1.ls)
+	}
+
+	t1.vc = t1.vc.add(p.T1, 1)
+	threads[p.T1] = t1
+	locks[p.T2] = lock
+}
+
+func (l *ListenerPostProcess2) Put(p *util.SyncPair) {
+	if !p.PostProcess {
+		return
+	}
+
+	for _, r := range openRaces { // open races left are races for which no 'next' unlock exists. so we are at the end of the program, no further unlocks happened, all open races are closed now!
+		k := r.prevAcc.v.get(uint32(r.prevAcc.t))        //j#k
+		thi_at_j := r.raceAcc.v.get(uint32(r.prevAcc.t)) //Th(i)[j]
+
+		if k > thi_at_j {
+			if !intersect(r.raceAcc.ls, r.prevAcc.ls) {
+				report.ReportRace(report.Location{File: uint32(r.prevAcc.sourceRef), Line: uint32(r.prevAcc.line), W: true},
+					report.Location{File: r.raceAcc.sourceRef, Line: uint32(r.raceAcc.line), W: true}, false, 0)
+			}
+		}
+	}
+
+}

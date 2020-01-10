@@ -1,0 +1,17 @@
+FSDirectory.java:197, FSDirectory.java:197
+SegmentInfos.java:406, SegmentInfos.java:32
+SegmentReader.java:185, SegmentReader.java:301
+Similarity.java:290, Similarity.java:311
+StandardAnalyzer.java:52, StandardAnalyzer.java:44
+QueryParserTokenManager.java:952, QueryParserTokenManager.java:1179
+QueryParserTokenManager.java:988, QueryParserTokenManager.java:1119
+StandardTokenizer.java:64, StandardFilter.java:34
+StandardTokenizer.java:64, StandardFilter.java:35
+StopFilter.java:30, StopFilter.java:33
+StandardTokenizerImpl.java:178, StandardTokenizerImpl.java:643
+StandardTokenizerImpl.java:405, StandardTokenizerImpl.java:643
+Token.java:122, Token.java:473
+Similarity.java:319, TermScorer.java:74
+StandardTokenizerImpl.java:145, StandardTokenizerImpl.java:660
+FSDirectory.java:197, FSDirectory.java:524
+Search.java:251, Search.java:250

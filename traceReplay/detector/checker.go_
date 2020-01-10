@@ -1,0 +1,187 @@
+package race
+
+import (
+	"fmt"
+
+	"../util"
+	"./graphbuilder"
+)
+
+type EventPair struct {
+	T1    uint64
+	T1Idx int
+	T2    uint64
+	T2Idx int
+}
+
+func Check(first *util.Item, second *util.Item) bool {
+	start := first        // first access event
+	finish := second.Prev // one event before the second access event
+
+	visited = make(map[*util.Item]struct{})
+
+	result, path := search(start, finish)
+	fmt.Println("Path:")
+	for i := range path {
+		fmt.Println(path[i])
+	}
+
+	return !result
+}
+
+func swap(x []*util.Item, i, j int) {
+	tmp := x[i]
+	x[i] = x[j]
+	x[j] = tmp
+}
+
+type permutation struct {
+	items []*util.Item
+}
+
+var permutations []permutation
+
+func permute(x []*util.Item, k int) {
+	for i := k; i < len(x); i++ {
+		swap(x, i, k)
+		permute(x, k+1)
+		swap(x, k, i)
+	}
+	if k == len(x)-1 {
+		perm := make([]*util.Item, len(x))
+		for i := range x {
+			perm[i] = x[i]
+		}
+		permutations = append(permutations, permutation{perm})
+	}
+}
+
+func CheckAlternatives(first, second *util.Item, emulatedThreads map[uint64]graphbuilder.Buffer) bool {
+	start := first        // first access event
+	finish := second.Prev // one event before the second access event
+
+	//visited = make(map[*util.Item]struct{})
+	initVisited(start)
+	permutations = []permutation{}
+
+	result, path := search(start, finish)
+
+	if !result {
+		return true
+	}
+
+	involvedChans := make(map[uint64]struct{})
+	for _, v := range path {
+		if v.Ops[0].BufSize > 0 {
+			involvedChans[v.Ops[0].Ch] = struct{}{}
+		}
+	}
+
+	items := make([]*util.Item, 0)
+	for k := range involvedChans {
+		ch := emulatedThreads[k]
+		for i := range ch.Slots {
+			for _, it := range ch.Slots[i].Events {
+				items = append(items, it)
+			}
+		}
+	}
+
+	//	fmt.Println("Perms:")
+	permute(items, 0)
+
+	// for i := range permutations {
+	// 	for _, v := range permutations[i].items {
+	// 		fmt.Println(v)
+	// 	}
+	// 	fmt.Println("------------------------")
+	// }
+
+	originalInternalNext := make(map[*util.Item]*util.Item)
+
+	for _, perm := range permutations {
+		emulation := make(map[uint64]graphbuilder.Buffer)
+		counter := make(map[uint64]uint32)
+
+		//feed buffers
+		for _, v := range perm.items {
+			count := counter[v.Thread]
+			bufSlot := count % (v.Ops[0].BufSize)
+
+			ch, ok := emulation[v.Thread] //get ncessary channel
+			if !ok {                      //init channel if not done so far
+				ch = graphbuilder.Buffer{make([]util.Thread, v.Ops[0].BufSize)}
+			}
+			slot := ch.Slots[bufSlot] // get the buffer for the current op
+			originalInternalNext[v] = v.InternalNext
+			v.InternalNext = nil
+			if len(slot.Events) > 0 { //not the first event. link current event as internal next
+				slot.Events[len(slot.Events)-1].InternalNext = v
+				v.Prev = slot.Events[len(slot.Events)-1]
+			}
+			slot.Events = append(slot.Events, v) //add current event to the buffer
+			ch.Slots[bufSlot] = slot
+			emulation[v.Thread] = ch
+
+			count++
+			counter[v.Thread] = count
+		}
+		//visited = make(map[*util.Item]struct{})
+		initVisited(start)
+		result, path = search(start, finish)
+
+		//restore original links does not fix the problem!!!!!!!!!!!!!
+		for i := range perm.items {
+			v := originalInternalNext[perm.items[i]]
+			perm.items[i].InternalNext = v
+		}
+
+		if !result {
+			return true
+		}
+	}
+
+	return false
+}
+
+var visited map[*util.Item]struct{}
+
+func initVisited(x *util.Item) {
+	visited = make(map[*util.Item]struct{})
+	if x.Prev == nil {
+		return
+	}
+	curr := x.Prev
+	for curr.Prev != nil {
+		visited[curr] = struct{}{}
+		curr = curr.Prev
+	}
+}
+
+func search(current, finish *util.Item) (bool, []*util.Item) {
+	//fmt.Println(current)
+	visited[current] = struct{}{}
+	path := []*util.Item{current}
+	if current == finish { //found a way
+		return true, path
+	}
+
+	if len(current.Next) == 0 && current.InternalNext == nil { //no child nodes
+		return false, path
+	}
+
+	for i := range current.Next {
+		//	fmt.Println("next", current.Next[i])
+		if _, f := visited[current.Next[i]]; !f {
+			if ok, p := search(current.Next[i], finish); ok { //external links
+				return true, append(path, p...)
+			}
+		}
+	}
+	if current.InternalNext != nil {
+		if ok, p := search(current.InternalNext, finish); ok { //internal links
+			return true, append(path, p...)
+		}
+	}
+	return false, nil
+}

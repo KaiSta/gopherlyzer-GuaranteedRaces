@@ -1,0 +1,11 @@
+:1, FSDirectory.java:197
+:1, SegmentInfos.java:32
+:1, SegmentReader.java:301
+:1, Similarity.java:311
+:1, QueryParserTokenManager.java:1179
+:1, StandardFilter.java:34
+:1, StopFilter.java:33
+:1, StandardTokenizerImpl.java:643
+:1, Token.java:473
+:1, TermScorer.java:74
+:1, StandardTokenizerImpl.java:660

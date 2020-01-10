@@ -1,0 +1,11 @@
+1,WR,3,Test.java:1:1,1
+1,LK,1,nil,1
+1,WR,1,Test.java:2:2,2
+1,WR,2,Test.java:3:3,3
+1,UK,1,nil,0
+2,LK,1,nil,2
+2,WR,1,Test.java:4:4,4
+2,UK,1,nil,0
+2,WR,3,Test.java:5:5,5
+3,RD,1,Test.java:6:6,6
+3,RD,2,Test.java:7:7,7
