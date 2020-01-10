@@ -3,6 +3,7 @@
 ## Usage
 
 cd traceReplay
+
 go run main.go -mode sshb -parser javainc -trace ..\benchmark\Test6.log
 
 The result should be:
